@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NJ Snowfall — Feb 23, 2026</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/topojson/3.0.2/topojson.min.js"></script>
+<style>
+  :root {
+    --bg: #070c18;
+    --panel: #0c1220;
+    --border: #162035;
+    --accent: #7ec8f5;
+    --text: #d8e8f8;
+    --muted: #4e6882;
+    --water: #0a1520;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'IBM Plex Sans', sans-serif;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  header {
+    padding: 14px 26px 12px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    background: linear-gradient(180deg,#0b1325 0%,var(--bg) 100%);
+    flex-shrink: 0;
+  }
+  header h1 {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 2.1rem;
+    letter-spacing: 4px;
+    color: #fff;
+    line-height: 1;
+  }
+  .subtitle {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.68rem;
+    color: var(--accent);
+    letter-spacing: 3px;
+  }
+  .layout {
+    display: grid;
+    grid-template-columns: 1fr 285px;
+    flex: 1;
+    min-height: 0;
+  }
+
+  /* ── MAP ─────────────────────────────────────────────── */
+  #map-container {
+    position: relative;
+    overflow: hidden;
+    background: var(--water);
+  }
+  /* Subtle water texture */
+  #map-container::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+      repeating-linear-gradient(0deg, transparent, transparent 28px, rgba(14,32,55,0.35) 28px, rgba(14,32,55,0.35) 29px),
+      repeating-linear-gradient(90deg, transparent, transparent 28px, rgba(14,32,55,0.35) 28px, rgba(14,32,55,0.35) 29px);
+    pointer-events: none;
+    z-index: 0;
+  }
+  #map-svg {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    height: 100%;
+  }
+  .county {
+    cursor: pointer;
+    stroke: #050d1a;
+    stroke-width: 0.8px;
+    transition: filter 0.15s, stroke 0.15s, stroke-width 0.15s;
+  }
+  .county:hover {
+    stroke: #fff;
+    stroke-width: 1.8px;
+    filter: brightness(1.3) drop-shadow(0 0 5px rgba(126,200,245,0.6));
+  }
+  .county.selected {
+    stroke: #fff;
+    stroke-width: 2.2px;
+    filter: brightness(1.4) drop-shadow(0 0 8px rgba(255,255,255,0.5));
+  }
+  .county-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 8px;
+    fill: rgba(255,255,255,0.82);
+    pointer-events: none;
+    text-anchor: middle;
+    dominant-baseline: middle;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+    text-shadow: 0 1px 3px rgba(0,0,0,1);
+  }
+  .county-snow {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 7px;
+    fill: rgba(255,255,255,0.55);
+    pointer-events: none;
+    text-anchor: middle;
+    dominant-baseline: middle;
+  }
+  /* State border overlay */
+  .state-border {
+    fill: none;
+    stroke: rgba(255,255,255,0.15);
+    stroke-width: 1.5px;
+    pointer-events: none;
+  }
+
+  /* ── TOOLTIP ─────────────────────────────────────────── */
+  #tooltip {
+    position: absolute;
+    background: rgba(4,9,20,0.97);
+    border: 1px solid var(--accent);
+    border-radius: 3px;
+    padding: 10px 14px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.1s;
+    z-index: 100;
+    min-width: 160px;
+  }
+  #tooltip.show { opacity: 1; }
+  #tooltip .tip-county {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.15rem;
+    color: var(--accent);
+    letter-spacing: 1.5px;
+    margin-bottom: 5px;
+  }
+  #tooltip .tip-max {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #fff;
+  }
+  #tooltip .tip-detail {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.63rem;
+    color: var(--muted);
+    margin-top: 3px;
+    line-height: 1.5;
+  }
+
+  /* ── SIDEBAR ──────────────────────────────────────────── */
+  .sidebar {
+    background: var(--panel);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .sb-hd {
+    padding: 13px 17px 9px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .sb-hd h2 {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.1rem;
+    letter-spacing: 2.5px;
+    color: var(--accent);
+  }
+  .sb-hd p {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.62rem;
+    color: var(--muted);
+    margin-top: 1px;
+    letter-spacing: 1px;
+  }
+  .county-list {
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+    padding: 4px 0;
+  }
+  .county-list::-webkit-scrollbar { width: 3px; }
+  .county-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  .ci {
+    padding: 7px 17px;
+    cursor: pointer;
+    border-left: 3px solid transparent;
+    transition: all 0.12s;
+    position: relative;
+  }
+  .ci:hover { background: rgba(126,200,245,0.05); border-left-color: var(--accent); }
+  .ci.active { background: rgba(126,200,245,0.1); border-left-color: #fff; }
+  .ci-row { display:flex; justify-content:space-between; align-items:center; }
+  .ci-name { font-size:0.77rem; font-weight:600; }
+  .ci-val { font-family:'IBM Plex Mono',monospace; font-size:0.72rem; font-weight:600; }
+  .ci-bar { height:2px; border-radius:1px; margin-top:4px; opacity:0.8; }
+
+  /* Legend */
+  .legend-wrap {
+    padding: 9px 17px 10px;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .legend-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.6rem;
+    color: var(--muted);
+    letter-spacing: 2px;
+    margin-bottom: 5px;
+  }
+  .legend-bar-wrap { display:flex; align-items:center; gap:7px; }
+  .legend-grad {
+    flex:1; height:8px; border-radius:4px;
+    background: linear-gradient(90deg,#0c1e42,#1555a8,#2e8fd4,#80c8ee,#dbeeff);
+  }
+  .leg-n { font-family:'IBM Plex Mono',monospace; font-size:0.6rem; color:var(--muted); }
+
+  /* Detail panel */
+  .detail-panel {
+    border-top: 1px solid var(--border);
+    background: #060d1b;
+    overflow-y: auto;
+    flex-shrink: 0;
+    max-height: 40%;
+  }
+  .detail-panel::-webkit-scrollbar { width: 3px; }
+  .detail-panel::-webkit-scrollbar-thumb { background: var(--border); }
+  .dp-inner { padding: 11px 17px; }
+  .dp-inner h3 {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1rem;
+    letter-spacing: 2px;
+    color: #fff;
+    margin-bottom: 7px;
+  }
+  .town-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 3.5px 0;
+    border-bottom: 1px solid rgba(22,32,53,0.7);
+    font-size: 0.7rem;
+  }
+  .town-row:last-child { border-bottom: none; }
+  .town-name { color: var(--text); }
+  .town-val { font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:0.72rem; }
+
+  /* Compass */
+  .compass {
+    position: absolute;
+    bottom: 14px;
+    left: 14px;
+    z-index: 10;
+    opacity: 0.5;
+    width: 38px;
+    height: 38px;
+  }
+  /* Loading */
+  #loading {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--water);
+    z-index: 50;
+    flex-direction: column;
+    gap: 12px;
+  }
+  #loading p {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.75rem;
+    color: var(--muted);
+    letter-spacing: 2px;
+  }
+  .spinner {
+    width: 32px; height: 32px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #map-container:not(.ready) #map-svg { opacity: 0; }
+  #map-container.ready #loading { display: none; }
+  #map-container.ready #map-svg { opacity: 1; transition: opacity 0.4s; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>NJ SNOWFALL</h1>
+  <span class="subtitle">February 23, 2026 &nbsp;·&nbsp; 21 Counties &nbsp;·&nbsp; NWS Data</span>
+</header>
+
+<div class="layout">
+  <div id="map-container">
+    <div id="loading">
+      <div class="spinner"></div>
+      <p>LOADING MAP DATA...</p>
+    </div>
+    <div id="tooltip"></div>
+    <svg id="map-svg"></svg>
+
+    <!-- Compass rose -->
+    <svg class="compass" viewBox="0 0 38 38">
+      <circle cx="19" cy="19" r="17" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="1"/>
+      <polygon points="19,3 21,19 19,15 17,19" fill="white" opacity="0.9"/>
+      <polygon points="19,35 21,19 19,23 17,19" fill="rgba(255,255,255,0.3)"/>
+      <polygon points="3,19 19,17 15,19 19,21" fill="rgba(255,255,255,0.3)"/>
+      <polygon points="35,19 19,17 23,19 19,21" fill="rgba(255,255,255,0.2)"/>
+      <text x="19" y="10" text-anchor="middle" font-size="5" fill="white" font-family="monospace" font-weight="bold">N</text>
+    </svg>
+  </div>
+
+  <div class="sidebar">
+    <div class="sb-hd">
+      <h2>Snow Totals</h2>
+      <p>RANKED HIGH → LOW · CLICK TO EXPLORE</p>
+    </div>
+    <div class="county-list" id="county-list"></div>
+    <div class="legend-wrap">
+      <div class="legend-title">SNOWFALL DEPTH</div>
+      <div class="legend-bar-wrap">
+        <span class="leg-n">4"</span>
+        <div class="legend-grad"></div>
+        <span class="leg-n">31"</span>
+      </div>
+    </div>
+    <div class="detail-panel" id="detail-panel">
+      <div class="dp-inner">
+        <h3>Select a County</h3>
+        <p style="font-size:0.7rem;color:var(--muted);line-height:1.6">Click any county on the map or in the list to see town-by-town totals.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── SNOWFALL DATA ──────────────────────────────────────────────────────────
+const snowData = {
+  "Atlantic":   { max:19,   avg:14.5, towns:[["Mays Landing",19],["Somers Point",18.2],["Egg Harbor Twp.",18],["Minotola",17],["Atlantic City Intl",16.9],["Buena Vista Twp.",16.5],["Atlantic City",14],["Estell Manor",12.7],["Brigantine",12.5],["Galloway Twp",12.1],["Margate City",11.4],["Hammonton",10.7]] },
+  "Bergen":     { max:30.7, avg:21.3, towns:[["Lyndhurst",30.7],["Carlstadt",30.2],["Leonia",29.7],["Bogota",29.5],["Haworth",27.6],["Englewood",27.5],["Ridgefield",27.1],["Fort Lee",26],["Fairview",24.5],["Moonachie",24.3],["Tenafly",24.2],["River Edge",24],["Bergenfield",23.8],["Harrington Park",23],["Wood-Ridge",22.5],["Closter",22.4],["Oakland",22],["Palisades Park",21.8],["Franklin Lakes",21.2],["Ramsey",20.1],["Cresskill",19.5],["Northvale",19],["Westwood",18],["Wallington",17.9],["Little Ferry",17.5],["Fair Lawn",17],["River Vale",17],["North Arlington",16],["Mahwah",15],["Montvale",15],["New Milford",15],["Park Ridge",14.8],["Oradell",14.5]] },
+  "Burlington": { max:21,   avg:17.2, towns:[["Leisuretowne",21],["Mount Laurel",20.8],["Columbus",20.5],["South Jersey Regional",20.3],["Mount Holly",20.3],["Pemberton",20],["Moorestown",19.5],["Westampton",19.2],["Lake Pine",19.2],["Rancocas",19.2],["Mansfield Twp",19],["Medford Twp",18],["Medford",17.8],["Hainesport",17.8],["Tabernacle",17.5],["Burlington Twp",17],["Moorestown Twp",16.7],["Delanco",16.2],["Maple Shade",16],["Chesterfield",15.9],["Willingboro",14.5],["Bordentown",14],["Medford Lakes",14],["Delran",14],["Evesham",12.3],["Cinnaminson",12]] },
+  "Camden":     { max:18,   avg:15.3, towns:[["Somerdale",18],["Lindenwold",17],["Barrington",16.5],["Sicklerville",16],["Mt. Ephraim",15],["Haddon Heights",15],["Bellmawr",14.7],["Haddon Township",14],["Winslow Twp",9.5]] },
+  "Cape May":   { max:16,   avg:12.4, towns:[["Ocean City",16],["Lower Twp",12.5],["North Wildwood",8.7]] },
+  "Cumberland": { max:16.1, avg:14.7, towns:[["Bridgeton",16.1],["Newport",16],["Vineland",12]] },
+  "Essex":      { max:26,   avg:16.7, towns:[["Orange",26],["Newark",25.8],["Glen Ridge",19],["Essex Fells",18.5],["Bloomfield",17],["Montclair",17],["North Caldwell",17],["Nutley",17],["Cedar Grove",16],["Millburn",16],["West Orange",16],["Verona",14.2],["West Caldwell Twp",12.3]] },
+  "Gloucester": { max:21.5, avg:15.9, towns:[["Pitman",21.5],["Monroe Twp",19],["West Deptford Twp",18],["Mantua",17],["Glassboro",17],["Malaga",17],["Washington Twp",16],["Clayton",15],["Franklin Twp",14.3],["East Greenwich Twp",14],["Paulsboro",13.4],["Williamstown",10.3]] },
+  "Hudson":     { max:20.5, avg:19,   towns:[["Hoboken",20.5],["Kearny",19],["Harrison",18]] },
+  "Hunterdon":  { max:13,   avg:8.6,  towns:[["Flemington",13],["Three Bridges",10.4],["Cloverhill",9.3],["Ringoes",9],["Stanton",8.6],["Sergeantsville",8],["Lebanon",7],["Holland Twp",6.9],["Frenchtown",6.9],["Whitehouse Station",5.8]] },
+  "Mercer":     { max:19.3, avg:15.9, towns:[["Robbinsville Twp.",19.3],["East Windsor Twp",17.5],["Lawrence Twp",17],["Mercerville",16.5],["Trenton Mercer Airport",16.4],["Princeton",16],["Hopewell Twp.",16],["West Windsor Twp.",16],["Hamilton Square",15.9],["Pennington",15.5],["Ewing",15.5],["Hamilton Twp",15.1],["Woodsville",15],["Lawrenceville",14]] },
+  "Middlesex":  { max:25,   avg:17.9, towns:[["Perth Amboy",25],["Matawan",24],["Hopelawn",23],["Concordia",22],["Iselin",22],["Woodbridge",21.3],["Sayreville",21],["Parlin",21],["North Brunswick",19.1],["Edison",17.8],["Cranbury",17],["Metuchen",17],["South River",15.5],["Plainsboro",15],["South Plainfield",15],["Piscataway",11.1]] },
+  "Monmouth":   { max:26.5, avg:19.8, towns:[["Strathmore",26.5],["Freehold",26],["Middletown",25],["Cream Ridge",25],["Howell",24.5],["Colts Neck",24.1],["Manalapan Township",21],["Centerville",20.5],["Matawan",18.5],["Howell Twp",18.2],["Ocean Twp.",18],["Keyport",18],["West Long Branch",16],["Red Bank",14.3],["Allentown",14],["Long Branch",11.5],["Neptune City",11]] },
+  "Morris":     { max:20,   avg:12.7, towns:[["Chatham",20],["Green Pond",18.1],["Parsippany",18],["Madison",16.8],["Randolph",16.3],["Millington",15.2],["Denville",14.5],["Mine Hill Twp.",14],["Butler",13.5],["Rockaway",13],["Kinnelon",12],["Pequannock",12],["Brookside",11.5],["Hopatcong",9],["Mendham",9],["Schooleys Mtn",8.7],["Ledgewood",6],["Long Valley",5.5]] },
+  "Ocean":      { max:25.8, avg:18.1, towns:[["Bayville",25.8],["Jackson",25.2],["Lakewood",24],["Toms River",22],["Lakehurst",21.8],["Whiting",20],["Manahawkin",19],["Brick",18.5],["Manchester Twp",18],["Ship Bottom",18],["Lanoka Harbor",17],["Tuckerton",17],["Little Egg Harbor Twp",16],["Lacey Twp",15],["Berkeley Twp.",14],["Stafford Twp.",14],["Beachwood",13.5],["Pt. Pleasant Beach",11.5]] },
+  "Passaic":    { max:18.5, avg:15.5, towns:[["Wayne",18.5],["Totowa",16],["West Paterson",15],["Passaic",14]] },
+  "Salem":      { max:18,   avg:14.3, towns:[["Monroeville",18],["Olivet",16],["Quinton",16],["Upper Pittsgrove Twp.",11.5],["Oldmans Twp.",9.4]] },
+  "Somerset":   { max:18.5, avg:14.1, towns:[["Green Brook Twp",18.5],["Middlebush",18],["Warren",17],["Hillsborough Twp",16.3],["Belle Mead",16],["Franklin Twp",16],["North Plainfield",16],["North Brunswick",15.3],["Watchung",15],["Manville",14.9],["Basking Ridge",14.5],["Bridgewater",14],["Somerville",13.4],["Bedminster Twp.",13.2],["Bernards Twp.",13.1],["Martinsville",12],["Neshanic Station",12],["Bernardsville",11.1]] },
+  "Sussex":     { max:13.2, avg:8.6,  towns:[["Highland Lakes",13.2],["Hopatcong",12.1],["Stanhope",11],["Stockholm",11],["Sparta",9.5],["Hardyston Twp",8.5],["Vernon",8.2],["Wantage Twp",8.1],["Frankford Twp",7],["Newton",6],["Montague Twp",4.7],["High Point",4.5]] },
+  "Union":      { max:27.2, avg:20,   towns:[["Newark Airport",27.2],["Cranford",21],["Westfield",20],["Springfield",19.3],["Clark",18.5]] },
+  "Warren":     { max:9.2,  avg:6.4,  towns:[["Hackettstown",9.2],["Holland Twp",7.8],["Harmony",7],["Greenwich Twp",6],["Stewartsville",6],["Phillipsburg",6],["Blairstown Twp",5.2],["Belvidere",5]] }
+};
+
+// NJ county FIPS codes (state 34)
+const NJ_FIPS = {
+  "34001":"Atlantic","34003":"Bergen","34005":"Burlington","34007":"Camden",
+  "34009":"Cape May","34011":"Cumberland","34013":"Essex","34015":"Gloucester",
+  "34017":"Hudson","34019":"Hunterdon","34021":"Mercer","34023":"Middlesex",
+  "34025":"Monmouth","34027":"Morris","34029":"Ocean","34031":"Passaic",
+  "34033":"Salem","34035":"Somerset","34037":"Sussex","34039":"Union","34041":"Warren"
+};
+
+const GMIN = 4.5, GMAX = 30.7;
+
+function snowColor(v) {
+  const t = Math.min(1, Math.max(0, (v - GMIN) / (GMAX - GMIN)));
+  const stops = [
+    [10, 22, 52],
+    [14, 52, 115],
+    [28, 98, 185],
+    [72, 158, 220],
+    [180, 225, 248],
+    [220, 240, 255]
+  ];
+  const idx = t * (stops.length - 1);
+  const lo = Math.floor(idx), hi = Math.min(stops.length-1, lo+1);
+  const f = idx - lo;
+  const r = Math.round(stops[lo][0] + f*(stops[hi][0]-stops[lo][0]));
+  const g = Math.round(stops[lo][1] + f*(stops[hi][1]-stops[lo][1]));
+  const b = Math.round(stops[lo][2] + f*(stops[hi][2]-stops[lo][2]));
+  return `rgb(${r},${g},${b})`;
+}
+function townColor(v) {
+  const t = Math.min(1,Math.max(0,(v-GMIN)/(GMAX-GMIN)));
+  const h = Math.round(210 - t*40);
+  const s = Math.round(80 - t*20);
+  const l = Math.round(50 + t*40);
+  return `hsl(${h},${s}%,${l}%)`;
+}
+
+// ── D3 MAP ────────────────────────────────────────────────────────────────
+const container = document.getElementById('map-container');
+const svg = d3.select('#map-svg');
+const tip = document.getElementById('tooltip');
+const listEl = document.getElementById('county-list');
+let selectedCounty = null;
+let gCounties;
+
+// Fetch US county TopoJSON from Census/CDN
+// Using the publicly hosted us-atlas counties-10m.json
+Promise.all([
+  fetch('https://cdn.jsdelivr.net/npm/us-atlas@3/counties-10m.json').then(r => r.json())
+]).then(([us]) => {
+  drawMap(us);
+  buildSidebar();
+  document.getElementById('map-container').classList.add('ready');
+}).catch(err => {
+  document.getElementById('loading').innerHTML = `<p style="color:#c05050;font-size:0.7rem;font-family:monospace;padding:20px;text-align:center">⚠ Could not load map data.<br>Please check your internet connection.</p>`;
+  console.error(err);
+});
+
+function drawMap(us) {
+  const W = container.clientWidth;
+  const H = container.clientHeight;
+
+  // Extract NJ counties only
+  const allCounties = topojson.feature(us, us.objects.counties);
+  const njCounties = {
+    type: "FeatureCollection",
+    features: allCounties.features.filter(f => f.id && String(f.id).padStart(5,'0').startsWith('34'))
+  };
+
+  // Also extract NJ state border
+  const states = topojson.feature(us, us.objects.states);
+  const njState = states.features.find(f => f.id === '34');
+
+  // Projection — fit NJ to our viewport with padding
+  const projection = d3.geoMercator()
+    .fitExtent([[30, 20], [W - 20, H - 20]], njCounties);
+
+  const path = d3.geoPath().projection(projection);
+
+  // Draw counties
+  gCounties = svg.append('g').attr('class','counties-group');
+
+  gCounties.selectAll('path.county')
+    .data(njCounties.features)
+    .enter().append('path')
+    .attr('class','county')
+    .attr('d', path)
+    .attr('fill', d => {
+      const fips = String(d.id).padStart(5,'0');
+      const name = NJ_FIPS[fips];
+      return name && snowData[name] ? snowColor(snowData[name].max) : '#0f1e32';
+    })
+    .on('mouseenter', function(event, d) {
+      const fips = String(d.id).padStart(5,'0');
+      const name = NJ_FIPS[fips];
+      if (!name || !snowData[name]) return;
+      const sd = snowData[name];
+      tip.innerHTML = `
+        <div class="tip-county">${name} Co.</div>
+        <div class="tip-max">❄ Max: ${sd.max}"</div>
+        <div class="tip-detail">Avg: ${sd.avg}" &nbsp;·&nbsp; ${sd.towns.length} reports<br>Top: ${sd.towns[0][0]}</div>
+      `;
+      tip.classList.add('show');
+    })
+    .on('mousemove', function(event) {
+      const r = container.getBoundingClientRect();
+      let x = event.clientX - r.left + 14;
+      let y = event.clientY - r.top - 10;
+      if (x + 185 > W) x = event.clientX - r.left - 195;
+      tip.style.left = x + 'px';
+      tip.style.top = y + 'px';
+    })
+    .on('mouseleave', function() {
+      tip.classList.remove('show');
+    })
+    .on('click', function(event, d) {
+      const fips = String(d.id).padStart(5,'0');
+      const name = NJ_FIPS[fips];
+      if (name) selectCounty(name);
+    });
+
+  // State border on top
+  if (njState) {
+    svg.append('path')
+      .datum(njState)
+      .attr('class','state-border')
+      .attr('d', path);
+  }
+
+  // County labels
+  const labelGroup = svg.append('g').attr('class','labels-group');
+
+  njCounties.features.forEach(feat => {
+    const fips = String(feat.id).padStart(5,'0');
+    const name = NJ_FIPS[fips];
+    if (!name || !snowData[name]) return;
+    const sd = snowData[name];
+    const centroid = path.centroid(feat);
+    if (!centroid || isNaN(centroid[0])) return;
+
+    // Determine if label fits (small counties get smaller text)
+    const bounds = path.bounds(feat);
+    const bw = bounds[1][0] - bounds[0][0];
+    const bh = bounds[1][1] - bounds[0][1];
+    const isSmall = bw < 38 || bh < 28;
+    const fs = isSmall ? 6 : 8;
+    const fsn = isSmall ? 5.5 : 7;
+
+    // Abbreviated names for tight counties
+    const abbrevs = { "Hudson":"HUDSON", "Union":"UNION", "Cape May":"CAPE MAY" };
+    const displayName = abbrevs[name] || name.toUpperCase();
+
+    labelGroup.append('text')
+      .attr('class','county-label')
+      .attr('x', centroid[0])
+      .attr('y', centroid[1] - 5)
+      .attr('font-size', fs)
+      .text(displayName);
+
+    labelGroup.append('text')
+      .attr('class','county-snow')
+      .attr('x', centroid[0])
+      .attr('y', centroid[1] + 5.5)
+      .attr('font-size', fsn)
+      .text(sd.max + '"');
+  });
+}
+
+// ── SIDEBAR ───────────────────────────────────────────────────────────────
+function buildSidebar() {
+  const sorted = Object.entries(snowData).sort((a,b) => b[1].max - a[1].max);
+  sorted.forEach(([name, d]) => {
+    const w = Math.round((d.max / GMAX) * 100);
+    const col = snowColor(d.max);
+    const div = document.createElement('div');
+    div.className = 'ci';
+    div.dataset.county = name;
+    div.innerHTML = `
+      <div class="ci-row">
+        <span class="ci-name">${name}</span>
+        <span class="ci-val" style="color:${col}">${d.max}"</span>
+      </div>
+      <div class="ci-bar" style="width:${w}%; background:linear-gradient(90deg,${col},#b8dff5)"></div>
+    `;
+    div.addEventListener('click', () => selectCounty(name));
+    listEl.appendChild(div);
+  });
+}
+
+function selectCounty(name) {
+  selectedCounty = name;
+
+  // Update map highlight
+  if (gCounties) {
+    gCounties.selectAll('path.county')
+      .classed('selected', d => {
+        const fips = String(d.id).padStart(5,'0');
+        return NJ_FIPS[fips] === name;
+      });
+  }
+
+  // Update sidebar
+  document.querySelectorAll('.ci').forEach(el => el.classList.remove('active'));
+  const li = listEl.querySelector(`[data-county="${name}"]`);
+  if (li) { li.classList.add('active'); li.scrollIntoView({behavior:'smooth',block:'nearest'}); }
+
+  // Update detail
+  renderDetail(name);
+}
+
+function renderDetail(name) {
+  const d = snowData[name];
+  let html = `<div class="dp-inner"><h3>${name.toUpperCase()} COUNTY</h3>`;
+  d.towns.forEach(([t, v]) => {
+    html += `<div class="town-row"><span class="town-name">${t}</span><span class="town-val" style="color:${townColor(v)}">${v}"</span></div>`;
+  });
+  html += '</div>';
+  document.getElementById('detail-panel').innerHTML = html;
+}
+</script>
+</body>
+</html>
